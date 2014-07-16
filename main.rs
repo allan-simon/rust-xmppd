@@ -16,41 +16,58 @@ fn main() {
         spawn(proc() {
             let mut authenticated = false;
             let mut stream = opt_stream.unwrap();
-            let mut buf = [0, ..1024]; loop {
+            let mut buf = [0, ..1024];
+            loop {
                 match stream.read(buf) {
                     Ok(n) => {
                         let optString = str::from_utf8(buf.slice_to(n));
                         let string = optString.unwrap();
 
-                        // start of stream client side, we also start our <stream>
-                        // and we advertize we only support PLAIN SASL for the moment
-                        if string.starts_with("<stream:stream") && !authenticated {
-                            send_initial_stream(&mut stream);
-                        // the client start to send us authentification stuff
-                        } else if string.starts_with("<auth") {
-                            authenticated = treat_login(
+                        if !authenticated {
+
+                            // start of stream client side, we also start
+                            // our <stream> and we advertize we only support
+                            // PLAIN SASL for the moment
+                            if string.starts_with("<stream:stream") {
+                                send_initial_stream(&mut stream);
+
+                            // the client start to send us authentification
+                            // stuff
+                            } else if string.starts_with("<auth") {
+                                authenticated = treat_login(
+                                    string,
+                                    &mut stream
+                                );
+                            } else {
+                                println!("not auth, not treated!");
+                                println!("{}", string);
+                            }
+
+                            continue;
+                        }
+
+                        ///////////////////////////
+                        // authenticated part
+                        //////////////////////////
+
+                        if string.starts_with("<stream:stream") {
+                            start_resource_binding(&mut stream);
+                        } else if string.starts_with("<iq ") {
+                            // TODO: add more checks
+                            if !is_resource_binding_iq(string) {
+                                println!("iq not treated!");
+                                println!("{}", string);
+                                send_dummy_result(string, &mut stream);
+                                continue;
+                            }
+                            treat_resource_binding(
                                 string,
                                 &mut stream
                             );
-                        } else if  string.starts_with("<stream:stream") && authenticated {
 
-                            println!("we are authenticated !!!!!");
-                            let newStream = "\
-                                <stream:stream xmlns='jabber:client' \
-                                    xmlns:stream='http://etherx.jabber.org/streams' \
-                                    id='c2s_345' \
-                                    from='localhost' \
-                                    version='1.0'
-                                >";
-
-                            let streamFeatures = "\
-                                <stream:features> \
-                                    <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/> \
-                                    <session xmlns='urn:ietf:params:xml:ns:xmpp-session'/> \
-                                </stream:features>";
-
-                            let _ = stream.write(newStream.as_bytes());
-                            let _ = stream.write(streamFeatures.as_bytes());
+                        } else {
+                            println!("not treated!");
+                            println!("{}", string);
                         }
                     },
                     Err(_) => break,
@@ -149,3 +166,126 @@ fn is_login_correct(
         password == PASSWORD;
 
 }
+
+/// send the second <stream> to the client and start to
+/// advertize the stream features for binding a resource
+/// to the session
+fn start_resource_binding (
+    stream : &mut std::io::net::tcp::TcpStream
+ ) {
+    let newStream = "\
+        <stream:stream xmlns='jabber:client' \
+            xmlns:stream='http://etherx.jabber.org/streams' \
+            id='c2s_345' \
+            from='localhost' \
+            version='1.0'
+        >";
+
+    let streamFeatures = "\
+        <stream:features> \
+            <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/> \
+        </stream:features>";
+
+    let _ = stream.write(newStream.as_bytes());
+    let _ = stream.write(streamFeatures.as_bytes());
+}
+
+///
+///
+fn get_iq_id (
+    iq: &str
+) -> String {
+    let iqString = iq.to_string();
+    let iqTag = iqString.as_slice().splitn('>', 1).nth(0).unwrap();
+    let idAttr = iqTag.splitn(' ', 3).find(|&x| x.starts_with("id=")).unwrap();
+    let id = idAttr.splitn('\'', 2).nth(1).unwrap();
+
+    id.to_string()
+}
+
+///
+///
+fn get_iq_first_child (
+    iq: &str
+) -> String {
+    let iqString = iq.to_string();
+    let tagStart = iqString.as_slice().splitn('>', 2).nth(1).unwrap();
+    let tmp = tagStart.splitn(' ', 1).nth(0).unwrap();
+    let firstChild = tmp.splitn('<', 1).nth(1).unwrap();
+
+    firstChild.to_string()
+}
+
+///
+///
+///
+fn is_resource_binding_iq (
+    iq: &str,
+) -> bool {
+    let firstChild = iq.splitn('>', 2).nth(1).unwrap();
+    println!("first child {}", firstChild);
+
+    get_iq_first_child(iq).as_slice() == "bind"
+}
+
+///
+///
+fn treat_resource_binding (
+    bindIq: &str,
+    stream : &mut std::io::net::tcp::TcpStream
+) {
+
+    //
+
+    // find the value inside <resource>
+    let tmpString = bindIq.splitn('>', 3).nth(3).unwrap();
+    let resource = tmpString.splitn('<', 1).nth(0).unwrap();
+
+    // find the iq  id
+    // TODO: extract it in separate function
+    let id = get_iq_id(bindIq);
+
+    println!("{}", id);
+    send_resource_binding_result(
+        resource,
+        id.as_slice(),
+        stream
+    );
+
+}
+///
+///
+fn send_dummy_result (
+    iq: &str,
+    stream : &mut std::io::net::tcp::TcpStream
+) {
+    let id = get_iq_id(iq);
+    let result = format!(
+        "<iq type='result' id='{id}'/>",
+        id = id
+    );
+
+    let _ = stream.write(result.as_bytes());
+}
+
+
+///
+///
+fn send_resource_binding_result (
+    resource: &str,
+    id: &str,
+    stream : &mut std::io::net::tcp::TcpStream
+) {
+    let result = format!(
+        "<iq type='result' id='{id}'>\
+          <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'>\
+            <jid>him@localhost/{resource}</jid>\
+          </bind>\
+        </iq>",
+        id = id,
+        resource = resource
+    );
+
+    let _ = stream.write(result.as_bytes());
+}
+
