@@ -1,3 +1,5 @@
+//! rust-xmppd, xmpp server written in rust
+//!
 extern crate serialize;
 
 use std::str;
@@ -58,6 +60,8 @@ fn main() {
     }
 }
 
+/// send on the wire the beginning of a xmpp communication (<stream:stream>)
+/// and <stream:features> to advertize the auth mechanism we support
 fn send_initial_stream (stream : &mut std::io::net::tcp::TcpStream) {
 
     
@@ -84,6 +88,10 @@ fn send_initial_stream (stream : &mut std::io::net::tcp::TcpStream) {
 
 }
 
+/// take a authentication <auth> xml tag and treat it
+/// depending of the content different answer may be answered back
+/// at the end we return if the user is not authenticated or not
+///
 fn treat_login (
     saslAuth: &str,
     stream : &mut std::io::net::tcp::TcpStream
@@ -106,6 +114,9 @@ fn treat_login (
     )
 }
 
+/// take a base64 encoded plain SASL auth payload
+/// realm\0username\0password and extract these 3 information
+///
 fn extract_real_username_password(
     plainSASLBase64Auth : &str
 ) -> (String, String, String) {
@@ -123,7 +134,8 @@ fn extract_real_username_password(
     (realm, username, password)
 }
 
-
+/// check if the given username and password are correct
+///
 fn is_login_correct(
     username: &str,
     password: &str
