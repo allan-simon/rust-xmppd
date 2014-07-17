@@ -9,6 +9,8 @@ use std::slice::ImmutableVector;
 
 use serialize::base64::FromBase64;
 
+mod IqParser;
+
 fn main() {
     let mut acceptor = TcpListener::bind("127.0.0.1", 5222).listen().unwrap();
     println!("listening started, ready to accept");
@@ -190,31 +192,7 @@ fn start_resource_binding (
     let _ = stream.write(streamFeatures.as_bytes());
 }
 
-///
-///
-fn get_iq_id (
-    iq: &str
-) -> String {
-    let iqString = iq.to_string();
-    let iqTag = iqString.as_slice().splitn('>', 1).nth(0).unwrap();
-    let idAttr = iqTag.splitn(' ', 3).find(|&x| x.starts_with("id=")).unwrap();
-    let id = idAttr.splitn('\'', 2).nth(1).unwrap();
 
-    id.to_string()
-}
-
-///
-///
-fn get_iq_first_child (
-    iq: &str
-) -> String {
-    let iqString = iq.to_string();
-    let tagStart = iqString.as_slice().splitn('>', 2).nth(1).unwrap();
-    let tmp = tagStart.splitn(' ', 1).nth(0).unwrap();
-    let firstChild = tmp.splitn('<', 1).nth(1).unwrap();
-
-    firstChild.to_string()
-}
 
 ///
 ///
@@ -225,7 +203,7 @@ fn is_resource_binding_iq (
     let firstChild = iq.splitn('>', 2).nth(1).unwrap();
     println!("first child {}", firstChild);
 
-    get_iq_first_child(iq).as_slice() == "bind"
+    ::IqParser::get_iq_first_child(iq).as_slice() == "bind"
 }
 
 ///
@@ -242,8 +220,7 @@ fn treat_resource_binding (
     let resource = tmpString.splitn('<', 1).nth(0).unwrap();
 
     // find the iq  id
-    // TODO: extract it in separate function
-    let id = get_iq_id(bindIq);
+    let id = ::IqParser::get_iq_id(bindIq);
 
     println!("{}", id);
     send_resource_binding_result(
@@ -259,7 +236,7 @@ fn send_dummy_result (
     iq: &str,
     stream : &mut std::io::net::tcp::TcpStream
 ) {
-    let id = get_iq_id(iq);
+    let id = ::IqParser::get_iq_id(iq);
     let result = format!(
         "<iq type='result' id='{id}'/>",
         id = id
