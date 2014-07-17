@@ -10,6 +10,7 @@ use std::slice::ImmutableVector;
 use serialize::base64::FromBase64;
 
 mod IqParser;
+mod IqRouter;
 
 fn main() {
     let mut acceptor = TcpListener::bind("127.0.0.1", 5222).listen().unwrap();
@@ -25,6 +26,9 @@ fn main() {
                         let optString = str::from_utf8(buf.slice_to(n));
                         let string = optString.unwrap();
 
+                        //////////////////////////
+                        // before authentication
+                        /////////////////////////
                         if !authenticated {
 
                             // start of stream client side, we also start
@@ -55,17 +59,8 @@ fn main() {
                         if string.starts_with("<stream:stream") {
                             start_resource_binding(&mut stream);
                         } else if string.starts_with("<iq ") {
-                            // TODO: add more checks
-                            if !is_resource_binding_iq(string) {
-                                println!("iq not treated!");
-                                println!("{}", string);
-                                send_dummy_result(string, &mut stream);
-                                continue;
-                            }
-                            treat_resource_binding(
-                                string,
-                                &mut stream
-                            );
+
+                            ::IqRouter::route_iq(string, &mut stream);
 
                         } else {
                             println!("not treated!");
@@ -193,76 +188,4 @@ fn start_resource_binding (
 }
 
 
-
-///
-///
-///
-fn is_resource_binding_iq (
-    iq: &str,
-) -> bool {
-    let firstChild = iq.splitn('>', 2).nth(1).unwrap();
-    println!("first child {}", firstChild);
-
-    ::IqParser::get_iq_first_child(iq).as_slice() == "bind"
-}
-
-///
-///
-fn treat_resource_binding (
-    bindIq: &str,
-    stream : &mut std::io::net::tcp::TcpStream
-) {
-
-    //
-
-    // find the value inside <resource>
-    let tmpString = bindIq.splitn('>', 3).nth(3).unwrap();
-    let resource = tmpString.splitn('<', 1).nth(0).unwrap();
-
-    // find the iq  id
-    let id = ::IqParser::get_iq_id(bindIq);
-
-    println!("{}", id);
-    send_resource_binding_result(
-        resource,
-        id.as_slice(),
-        stream
-    );
-
-}
-///
-///
-fn send_dummy_result (
-    iq: &str,
-    stream : &mut std::io::net::tcp::TcpStream
-) {
-    let id = ::IqParser::get_iq_id(iq);
-    let result = format!(
-        "<iq type='result' id='{id}'/>",
-        id = id
-    );
-
-    let _ = stream.write(result.as_bytes());
-}
-
-
-///
-///
-fn send_resource_binding_result (
-    resource: &str,
-    id: &str,
-    stream : &mut std::io::net::tcp::TcpStream
-) {
-    let result = format!(
-        "<iq type='result' id='{id}'>\
-          <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'>\
-            <jid>him@localhost/{resource}</jid>\
-          </bind>\
-        </iq>",
-        id = id,
-        resource = resource
-    );
-
-    let _ = stream.write(result.as_bytes());
-}
 
