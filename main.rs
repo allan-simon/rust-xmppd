@@ -9,14 +9,24 @@ use std::slice::ImmutableVector;
 
 use serialize::base64::FromBase64;
 
+use account_storer::JsonAccountStorer;
+use account_storer::AccountStorer;
+
 mod IqParser;
 mod IqRouter;
+mod account_storer;
+
 
 fn main() {
     let mut acceptor = TcpListener::bind("127.0.0.1", 5222).listen().unwrap();
     println!("listening started, ready to accept");
+
+    let accountStorer : JsonAccountStorer = AccountStorer::new("data/login.json");
+
     for opt_stream in acceptor.incoming() {
+        let localAccountStorer = accountStorer.clone();
         spawn(proc() {
+
             let mut authenticated = false;
             let mut stream = opt_stream.unwrap();
             let mut buf = [0, ..1024];
@@ -41,6 +51,7 @@ fn main() {
                             // stuff
                             } else if string.starts_with("<auth") {
                                 authenticated = treat_login(
+                                    &localAccountStorer,
                                     string,
                                     &mut stream
                                 );
@@ -107,6 +118,7 @@ fn send_initial_stream (stream : &mut std::io::net::tcp::TcpStream) {
 /// at the end we return if the user is not authenticated or not
 ///
 fn treat_login (
+    accountStorer: &JsonAccountStorer,
     saslAuth: &str,
     stream : &mut std::io::net::tcp::TcpStream
 ) -> bool {
@@ -122,7 +134,7 @@ fn treat_login (
     let answer = "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>";
     let _ = stream.write(answer.as_bytes());
 
-    is_login_correct(
+    accountStorer.is_login_correct(
         username.as_slice(),
         password.as_slice()
     )
@@ -146,22 +158,6 @@ fn extract_real_username_password(
     let password = str::from_utf8(split.get(2).as_slice()).unwrap().to_string();
 
     (realm, username, password)
-}
-
-/// check if the given username and password are correct
-///
-fn is_login_correct(
-    username: &str,
-    password: &str
-) -> bool {
-
-    static USERNAME: &'static str = "him";
-    static PASSWORD: &'static str = "mypassword";
-
-
-    return username == USERNAME &&
-        password == PASSWORD;
-
 }
 
 /// send the second <stream> to the client and start to
