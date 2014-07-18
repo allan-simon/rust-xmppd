@@ -6,6 +6,7 @@ use std::str;
 use std::io::{Listener, Acceptor};
 use std::io::net::tcp::TcpListener;
 use std::slice::ImmutableVector;
+use std::sync::Arc;
 
 use serialize::base64::FromBase64;
 
@@ -21,10 +22,11 @@ fn main() {
     let mut acceptor = TcpListener::bind("127.0.0.1", 5222).listen().unwrap();
     println!("listening started, ready to accept");
 
-    let accountStorer : JsonAccountStorer = AccountStorer::new("data/login.json");
+    let accountStorer: JsonAccountStorer = AccountStorer::new("data/login.json");
+    let shareAccountStorer = Arc::new(accountStorer);
 
     for opt_stream in acceptor.incoming() {
-        let localAccountStorer = accountStorer.clone();
+        let localAccountStorer = shareAccountStorer.clone();
         spawn(proc() {
 
             let mut authenticated = false;
@@ -51,7 +53,9 @@ fn main() {
                             // stuff
                             } else if string.starts_with("<auth") {
                                 authenticated = treat_login(
-                                    &localAccountStorer,
+                                    // dereference the counted reference
+                                    // to have access to it as a normal &
+                                    &*localAccountStorer,
                                     string,
                                     &mut stream
                                 );
