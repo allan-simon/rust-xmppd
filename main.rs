@@ -28,63 +28,66 @@ fn main() {
     for opt_stream in acceptor.incoming() {
         let localAccountStorer = shareAccountStorer.clone();
         spawn(proc() {
-
-            let mut authenticated = false;
             let mut stream = opt_stream.unwrap();
             let mut buf = [0, ..1024];
-            loop {
-                match stream.read(buf) {
-                    Ok(n) => {
-                        let optString = str::from_utf8(buf.slice_to(n));
-                        let string = optString.unwrap();
 
-                        //////////////////////////
-                        // before authentication
-                        /////////////////////////
-                        if !authenticated {
+            //////////////////////////
+            // before authentication
+            /////////////////////////
 
-                            // start of stream client side, we also start
-                            // our <stream> and we advertize we only support
-                            // PLAIN SASL for the moment
-                            if string.starts_with("<stream:stream") {
-                                send_initial_stream(&mut stream);
+            loop { match stream.read(buf) {
+                Ok(n) => {
+                    let optString = str::from_utf8(buf.slice_to(n));
+                    let string = optString.unwrap();
+                    // start of stream client side, we also start
+                    // our <stream> and we advertize we only support
+                    // PLAIN SASL for the moment
+                    if string.starts_with("<stream:stream") {
+                        send_initial_stream(&mut stream);
 
-                            // the client start to send us authentification
-                            // stuff
-                            } else if string.starts_with("<auth") {
-                                authenticated = treat_login(
-                                    // dereference the counted reference
-                                    // to have access to it as a normal &
-                                    &*localAccountStorer,
-                                    string,
-                                    &mut stream
-                                );
-                            } else {
-                                println!("not auth, not treated!");
-                                println!("{}", string);
-                            }
+                    // the client start to send us authentification
+                    // stuff
+                    } else if string.starts_with("<auth") {
+                        let authenticated = treat_login(
+                            // dereference the counted reference
+                            // to have access to it as a normal &
+                            &*localAccountStorer,
+                            string,
+                            &mut stream
+                        );
 
-                            continue;
-                        }
+                        if authenticated {break;}
 
-                        ///////////////////////////
-                        // authenticated part
-                        //////////////////////////
+                    } else {
+                        println!("not auth, not treated!");
+                        println!("{}", string);
+                    }
+                },
+                Err(_) => break,
+            };}
 
-                        if string.starts_with("<stream:stream") {
-                            start_resource_binding(&mut stream);
-                        } else if string.starts_with("<iq ") {
+            ///////////////////////////
+            // authenticated part
+            //////////////////////////
 
-                            ::IqRouter::route_iq(string, &mut stream);
+            loop { match stream.read(buf) {
+                Ok(n) => {
+                    let optString = str::from_utf8(buf.slice_to(n));
+                    let string = optString.unwrap();
 
-                        } else {
-                            println!("not treated!");
-                            println!("{}", string);
-                        }
-                    },
-                    Err(_) => break,
-                };
-            }
+                    if string.starts_with("<stream:stream") {
+                        start_resource_binding(&mut stream);
+                    } else if string.starts_with("<iq ") {
+
+                        ::IqRouter::route_iq(string, &mut stream);
+
+                    } else {
+                        println!("not treated!");
+                        println!("{}", string);
+                    }
+                },
+                Err(_) => break,
+            };}
         })
     }
 }
