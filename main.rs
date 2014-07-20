@@ -26,6 +26,7 @@ mod IqRouter;
 mod account_storer;
 mod message_router;
 mod stanza_parser;
+mod presence_router;
 mod resource_binding;
 mod auth;
 
@@ -159,15 +160,26 @@ fn main() {
 
                         if string.starts_with("<iq ") {
                             ::IqRouter::route_iq(string, &mut writerStream);
-
                         } else if string.starts_with("<message ") {
 
                             ::message_router::route_message(
-                                localJid.as_slice(),
+                                localFullJid.as_slice(),
                                 localQueues.read(),
                                 string,
                                 &mut writerStream
                             );
+                        } else if
+                            string.starts_with("<presence>") ||
+                            string.starts_with("<presence ") ||
+                            string.starts_with("<presence/>")
+                        {
+                            ::presence_router::route_presence(
+                                localFullJid.as_slice(),
+                                localQueues.read(),
+                                string,
+                                &mut writerStream
+                            );
+
                         } else {
                             println!("not treated!");
                             println!("{}", string);
