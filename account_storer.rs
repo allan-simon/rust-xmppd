@@ -1,5 +1,5 @@
 extern crate serialize;
-use serialize::json;
+use self::serialize::json;
 use std::collections::HashMap;
 use std::io::File;
 
