@@ -26,6 +26,7 @@ mod IqRouter;
 mod account_storer;
 mod message_router;
 mod stanza_parser;
+mod resource_binding;
 mod auth;
 
 
@@ -90,6 +91,39 @@ fn main() {
                 Err(_) => return,
             };}
 
+
+            let jid = format!("{}@localhost",username.clone());
+
+            ///////////////////////////
+            // resource binding part
+            //////////////////////////
+
+            let mut resource : String;
+
+            loop { match stream.read(buf) {
+                Ok(n) => {
+                    let string = str::from_utf8(buf.slice_to(n)).unwrap();
+                    println!("{}: {}", jid, string);
+
+                    if string.starts_with("<stream:stream") {
+                        ::resource_binding::start(&mut stream);
+                    } else if string.starts_with("<iq ") {
+                        match ::resource_binding::treat(string, &mut stream) {
+                            Some(data) => {
+                                resource = data;
+                                break;
+                            },
+                            None => return,
+                        }
+                    } else {
+                        println!("session binding fail {}: {}", jid, string);
+                        return;
+                    }
+                },
+                Err(_) => return,
+            };}
+
+
             ///////////////////////////
             // authenticated part
             //////////////////////////
@@ -98,10 +132,11 @@ fn main() {
             //receive messages from others
             let queue : Queue<String> = Queue::with_capacity(42);
             let mut hash = localQueues.write();
-            //TODO: replace by something smarter and containing 
-            //the resource not only the bare JID
-            let jid = format!("{}@localhost",username.clone());
-            hash.insert(jid.clone(), queue.clone());
+
+            //TODO: replace by something smarter
+            // we map the current full jid to current queue
+            let fullJid = format!("{}/{}", jid, resource);
+            hash.insert(fullJid.clone(), queue.clone());
             hash.downgrade();
 
             let sharedQueue = Arc::new(queue);
@@ -109,7 +144,7 @@ fn main() {
             let queueWriter = sharedQueue.clone();
 
             let mut readerStream = stream.clone();
-            let localJid = jid;
+            let localFullJid = fullJid;
 
             // process that keep reading for new stanza on our
             // internal Queue
@@ -120,12 +155,9 @@ fn main() {
                         //let optString = str::from_utf8(buf.slice_to(n));
                         //let string = optString.unwrap();
                         let string = data.as_slice(); 
-                        println!("{}: {}", localJid, string);
+                        println!("{}: {}", localFullJid, string);
 
-                        if string.starts_with("<stream:stream") {
-                            start_resource_binding(&mut writerStream);
-                        } else if string.starts_with("<iq ") {
-
+                        if string.starts_with("<iq ") {
                             ::IqRouter::route_iq(string, &mut writerStream);
 
                         } else if string.starts_with("<message ") {
@@ -190,29 +222,5 @@ fn send_initial_stream (stream : &mut std::io::net::tcp::TcpStream) {
     let _ = stream.write(supportedAuth.as_bytes());
 
 }
-
-/// send the second <stream> to the client and start to
-/// advertize the stream features for binding a resource
-/// to the session
-fn start_resource_binding (
-    stream : &mut std::io::net::tcp::TcpStream
- ) {
-    let newStream = "\
-        <stream:stream xmlns='jabber:client' \
-            xmlns:stream='http://etherx.jabber.org/streams' \
-            id='c2s_345' \
-            from='localhost' \
-            version='1.0'
-        >";
-
-    let streamFeatures = "\
-        <stream:features> \
-            <bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/> \
-        </stream:features>";
-
-    let _ = stream.write(newStream.as_bytes());
-    let _ = stream.write(streamFeatures.as_bytes());
-}
-
 
 
