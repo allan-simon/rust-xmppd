@@ -10,12 +10,25 @@ use std::sync::Arc;
 
 use serialize::base64::FromBase64;
 
+use std::collections::HashMap;
+// TODO though mpsc would have been the more semantically appropriate
+// (i.e only the current session pop from its own queue, and the other
+// only push), currently there's no "bounded" version of it, and under
+// heavy load mpsc will run out of memory and make the program to be
+// OOM killed
+//use std::sync::mpsc_queue::Queue;
+use std::sync::mpmc_bounded_queue::Queue;
+use std::sync::RWLock;
+use std::io::timer::sleep;
+
 use account_storer::JsonAccountStorer;
 use account_storer::AccountStorer;
 
 mod IqParser;
 mod IqRouter;
 mod account_storer;
+mod message_router;
+mod stanza_parser;
 
 
 fn main() {
@@ -23,14 +36,23 @@ fn main() {
     println!("listening started, ready to accept");
 
     let accountStorer: JsonAccountStorer = AccountStorer::new("data/login.json");
-    let shareAccountStorer = Arc::new(accountStorer);
+    let sharedAccountStorer = Arc::new(accountStorer);
+
+    // made to map a  Full JID to a Queue
+    let queuesByFullJid: HashMap<String, Queue<String>> = HashMap::new();
+    let sharedQueuesByFullJid = Arc::new(RWLock::new(queuesByFullJid));
 
     for opt_stream in acceptor.incoming() {
-        let localAccountStorer = shareAccountStorer.clone();
+        // create a clone of shared ressources that need to be
+        // accessed by each connection
+        let localAccountStorer = sharedAccountStorer.clone();
+        let localQueues = sharedQueuesByFullJid.clone();
+
         spawn(proc() {
             let mut stream = opt_stream.unwrap();
             let mut buf = [0, ..1024];
 
+            let mut username = String::new();
             //////////////////////////
             // before authentication
             /////////////////////////
@@ -48,7 +70,7 @@ fn main() {
                     // the client start to send us authentification
                     // stuff
                     } else if string.starts_with("<auth") {
-                        let authenticated = treat_login(
+                        username = treat_login(
                             // dereference the counted reference
                             // to have access to it as a normal &
                             &*localAccountStorer,
@@ -56,7 +78,7 @@ fn main() {
                             &mut stream
                         );
 
-                        if authenticated {break;}
+                        if !username.is_empty() {break;}
 
                     } else {
                         println!("not auth, not treated!");
@@ -70,24 +92,71 @@ fn main() {
             // authenticated part
             //////////////////////////
 
-            loop { match stream.read(buf) {
+            //now that we are authenticated we are ready to
+            //receive messages from others
+            let queue : Queue<String> = Queue::with_capacity(42);
+            let mut hash = localQueues.write();
+            //TODO: replace by something smarter and containing 
+            //the resource not only the bare JID
+            let jid = format!("{}@localhost",username.clone());
+            hash.insert(jid.clone(), queue.clone());
+            hash.downgrade();
+
+            let sharedQueue = Arc::new(queue);
+            let queueReader = sharedQueue.clone();
+            let queueWriter = sharedQueue.clone();
+
+            let mut readerStream = stream.clone();
+            let localJid = jid;
+
+            // process that keep reading for new stanza on our
+            // internal Queue
+            spawn(proc() {
+                let mut writerStream = stream.clone();
+                loop { match queueReader.pop() {
+                    Some(data) => {
+                        //let optString = str::from_utf8(buf.slice_to(n));
+                        //let string = optString.unwrap();
+                        let string = data.as_slice(); 
+                        println!("{}: {}", localJid, string);
+
+                        if string.starts_with("<stream:stream") {
+                            start_resource_binding(&mut writerStream);
+                        } else if string.starts_with("<iq ") {
+
+                            ::IqRouter::route_iq(string, &mut writerStream);
+
+                        } else if string.starts_with("<message ") {
+
+                            ::message_router::route_message(
+                                localJid.as_slice(),
+                                localQueues.read(),
+                                string,
+                                &mut writerStream
+                            );
+                        } else {
+                            println!("not treated!");
+                            println!("{}", string);
+                        }
+                    },
+                    None => sleep(10),
+                };}
+
+
+            });
+            
+            // loop that keep reading the TCP stream
+            // TODO: make it output Stanza object to gives to the
+            // the queue
+            loop { match readerStream.read(buf) {
                 Ok(n) => {
                     let optString = str::from_utf8(buf.slice_to(n));
                     let string = optString.unwrap();
-
-                    if string.starts_with("<stream:stream") {
-                        start_resource_binding(&mut stream);
-                    } else if string.starts_with("<iq ") {
-
-                        ::IqRouter::route_iq(string, &mut stream);
-
-                    } else {
-                        println!("not treated!");
-                        println!("{}", string);
-                    }
+                    queueWriter.push(string.to_string());
                 },
                 Err(_) => break,
             };}
+
         })
     }
 }
@@ -128,7 +197,7 @@ fn treat_login (
     accountStorer: &JsonAccountStorer,
     saslAuth: &str,
     stream : &mut std::io::net::tcp::TcpStream
-) -> bool {
+) -> String {
     //naive split to the text content inside <auth>
     let tmpString = saslAuth.splitn('>', 1).nth(1).unwrap();
     let base64Auth = tmpString.splitn('<', 1).nth(0).unwrap();
@@ -141,10 +210,15 @@ fn treat_login (
     let answer = "<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>";
     let _ = stream.write(answer.as_bytes());
 
-    accountStorer.is_login_correct(
+    let authenticated = accountStorer.is_login_correct(
         username.as_slice(),
         password.as_slice()
-    )
+    );
+
+
+    if authenticated { username }
+    else  { "".to_string() }
+
 }
 
 /// take a base64 encoded plain SASL auth payload
