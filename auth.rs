@@ -63,9 +63,9 @@ fn extract_real_username_password(
         |&x| x == 0
     ).collect();
 
-    let realm = str::from_utf8(split.get(0).as_slice()).unwrap().to_string();
-    let username = str::from_utf8(split.get(1).as_slice()).unwrap().to_string();
-    let password = str::from_utf8(split.get(2).as_slice()).unwrap().to_string();
+    let realm = str::from_utf8(split[0].as_slice()).unwrap().to_string();
+    let username = str::from_utf8(split[1].as_slice()).unwrap().to_string();
+    let password = str::from_utf8(split[2].as_slice()).unwrap().to_string();
 
     (realm, username, password)
 }
