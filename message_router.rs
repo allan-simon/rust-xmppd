@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-use std::sync::mpmc_bounded_queue::Queue;
 use std::io::net::tcp::TcpStream;
 use std::sync::RWLockReadGuard;
+use session_manager::SessionManager;
 
 pub fn route_message (
     currentUser: &str,
-    queues: RWLockReadGuard<HashMap<String, Queue<String>>>,
+    sessions: RWLockReadGuard<Box<SessionManager+Share+Send>>,
     message: &str,
     writerStream : &mut TcpStream
 ) {
@@ -34,31 +33,28 @@ pub fn route_message (
         ::stanza_parser::get_inside(message)
     );
 
+    //TODO: move that in a jid util module
+    let user = currentUser.splitn('@', 1).nth(0).unwrap_or("");
+    let tmp = currentUser.splitn('@', 1).nth(1).unwrap_or("");
+    let resource = tmp.splitn('/', 1).nth(1).unwrap_or("");
+    let domain = tmp.splitn('/', 1).nth(0).unwrap_or("");
+
 
     // if  the message is for us, we directly write it
     // on the stream
-    if currentUser == to.as_slice() {
+    // by for us we mean, either directed as a broadcast to our user
+    // or specifically to this specific resource
+    if format!("{}@{}",user,domain) == to || currentUser.to_string() == to {
         println!("{}: message for us", to);
         let _ = writerStream.write(messageToSend.as_bytes());
         return;
     }
 
-    // check if we need to send this message to the queue
-    // of somebody else
-    for (sessionJid, extQueue) in queues.iter() {
+    println!("{} domain {} res:{} and {}",user,domain,resource,to);
 
-        // we dont push message to our own queue to avoid
-        // infinite loop of messages...
-        if sessionJid.as_slice() == currentUser {continue;}
-        
-        // we ignore people who are not in the "to"
-        // TODO: see if we need to make it like that or if
-        // we can directly make a "get" (instead of for loop)
-        if sessionJid.as_slice() != to.as_slice() {continue;}
-
-        println!("{} sends to {}", currentUser, sessionJid);
-
-        extQueue.push(messageToSend.clone());
-    }
-
+    sessions.push_to(
+        currentUser.as_slice(),
+        to.as_slice(),
+        messageToSend.as_slice()
+    );
 }

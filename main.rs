@@ -7,19 +7,14 @@ use std::slice::ImmutableVector;
 use std::sync::Arc;
 
 
-use std::collections::HashMap;
-// TODO though mpsc would have been the more semantically appropriate
-// (i.e only the current session pop from its own queue, and the other
-// only push), currently there's no "bounded" version of it, and under
-// heavy load mpsc will run out of memory and make the program to be
-// OOM killed
-//use std::sync::mpsc_queue::Queue;
-use std::sync::mpmc_bounded_queue::Queue;
 use std::sync::RWLock;
 use std::io::timer::sleep;
 
 use account_storer::JsonAccountStorer;
 use account_storer::AccountStorer;
+
+use session_manager::SessionManager;
+use session_manager::InMemorySessionManager;
 
 mod IqParser;
 mod IqRouter;
@@ -28,6 +23,7 @@ mod message_router;
 mod stanza_parser;
 mod presence_router;
 mod resource_binding;
+mod session_manager;
 mod auth;
 
 
@@ -38,15 +34,18 @@ fn main() {
     let accountStorer: JsonAccountStorer = AccountStorer::new("data/login.json");
     let sharedAccountStorer = Arc::new(accountStorer);
 
-    // made to map a  Full JID to a Queue
-    let queuesByFullJid: HashMap<String, Queue<String>> = HashMap::new();
-    let sharedQueuesByFullJid = Arc::new(RWLock::new(queuesByFullJid));
+
+    let mut sessionManager : InMemorySessionManager = SessionManager::new();
+    sessionManager.add_domain("localhost".as_slice());
+    let immutableSessionManager = sessionManager;
+    let sharedSessionManager = Arc::new(RWLock::new(box immutableSessionManager as Box<SessionManager+Send+Share>));
+
 
     for opt_stream in acceptor.incoming() {
         // create a clone of shared ressources that need to be
         // accessed by each connection
         let localAccountStorer = sharedAccountStorer.clone();
-        let localQueues = sharedQueuesByFullJid.clone();
+        let localSessionManager = sharedSessionManager.clone();
 
         spawn(proc() {
             let mut stream = opt_stream.unwrap();
@@ -93,6 +92,14 @@ fn main() {
             };}
 
 
+            // we add user to session
+            let mut sessionWriter = localSessionManager.write();
+            sessionWriter.add_user(
+                "localhost".as_slice(),
+                username.as_slice()
+            );
+            sessionWriter.downgrade();
+
             let jid = format!("{}@localhost",username.clone());
 
             ///////////////////////////
@@ -128,17 +135,23 @@ fn main() {
             ///////////////////////////
             // authenticated part
             //////////////////////////
+            println!("we are authenticated and bound!");
 
             //now that we are authenticated we are ready to
             //receive messages from others
-            let queue : Queue<String> = Queue::with_capacity(42);
-            let mut hash = localQueues.write();
+
+            let mut sessionWriter = localSessionManager.write();
+            let queue = sessionWriter.add_session_resource(
+                "localhost".as_slice(),
+                username.as_slice(),
+                resource.as_slice()
+            ).unwrap();
+            sessionWriter.downgrade();
+
 
             //TODO: replace by something smarter
             // we map the current full jid to current queue
             let fullJid = format!("{}/{}", jid, resource);
-            hash.insert(fullJid.clone(), queue.clone());
-            hash.downgrade();
 
             let sharedQueue = Arc::new(queue);
             let queueReader = sharedQueue.clone();
@@ -164,7 +177,7 @@ fn main() {
 
                             ::message_router::route_message(
                                 localFullJid.as_slice(),
-                                localQueues.read(),
+                                localSessionManager.read(),
                                 string,
                                 &mut writerStream
                             );
@@ -173,12 +186,12 @@ fn main() {
                             string.starts_with("<presence ") ||
                             string.starts_with("<presence/>")
                         {
-                            ::presence_router::route_presence(
-                                localFullJid.as_slice(),
-                                localQueues.read(),
-                                string,
-                                &mut writerStream
-                            );
+                            //::presence_router::route_presence(
+                            //    localFullJid.as_slice(),
+                            //    localSessionManager.read(),
+                            //    string,
+                            //    &mut writerStream
+                            //);
 
                         } else {
                             println!("not treated!");

@@ -1,7 +1,12 @@
+// TODO though mpsc would have been the more semantically appropriate
+// (i.e only the current session pop from its own queue, and the other
+// only push), currently there's no "bounded" version of it, and under
+// heavy load mpsc will run out of memory and make the program to be
+// OOM killed
+//use std::sync::mpsc_queue::Queue;
+
 use std::sync::mpmc_bounded_queue::Queue;
 use std::collections::HashMap;
-use std::sync::Arc;
-
 
 
 ///
@@ -32,9 +37,11 @@ pub trait SessionManager {
 
     fn push_to(
         &self,
+        from: &str,
         to: &str,
         stanza: &str
     );
+
 }
 
 ///
@@ -173,20 +180,28 @@ impl SessionManager for InMemorySessionManager {
     ///
     fn push_to(
         &self,
+        from: &str,
         to: &str,
         stanza: &str
     ) {
 
-        let username = to.splitn('@', 0).nth(0).unwrap_or("");
-        let tmp = to.splitn('@', 0).nth(1).unwrap_or("");
-        let resource = to.splitn('/', 0).nth(1).unwrap_or("");
-        let domain = to.splitn('/', 0).nth(0).unwrap_or("");
+        //TODO: move that in a JID util module
+        let user = to.splitn('@', 1).nth(0).unwrap_or("");
+        let tmp = to.splitn('@', 1).nth(1).unwrap_or("");
+        let resource = tmp.splitn('/', 1).nth(1).unwrap_or("");
+        let domain = tmp.splitn('/', 0).nth(0).unwrap_or("");
         println!(
             "to user {} domain {} resource {}",
-            username,
-            resource,
-            domain
+            user,
+            domain,
+            resource
         );
+        for (_, session) in self.storage.get(&domain.to_string()).get(&user.to_string()).iter() {
+            // we dont push message to our own queue to avoid
+            // infinite loop of messages...
+            if session.jid.as_slice() == from {continue;}
+            session.queue.push(stanza.to_string());
+        }
         // check if we need to send this message to the queue
         // of somebody else
         //for (sessionJid, extQueue) in queues.iter() {

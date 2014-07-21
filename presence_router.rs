@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::sync::mpmc_bounded_queue::Queue;
+use session_manager::SessionManager;
 use std::io::net::tcp::TcpStream;
 use std::sync::RWLockReadGuard;
 
@@ -7,7 +6,7 @@ use stanza_parser::get_root_attribute;
 
 pub fn route_presence (
     currentUser: &str,
-    queues: RWLockReadGuard<HashMap<String, Queue<String>>>,
+    sessions: RWLockReadGuard<Box<SessionManager+Share+Send>>,
     presence: &str,
     writerStream : &mut TcpStream
 ) {
@@ -34,18 +33,18 @@ pub fn route_presence (
         //TODO: for the moment we broadcast to EVERYONE
         // instead we should follow the RFC and only broadcast to allowed
         // people
-        for (sessionJid, extQueue) in queues.iter() {
-            if sessionJid.as_slice() == currentUser {continue;}
+        //for (sessionJid, extQueue) in queues.iter() {
+        //    if sessionJid.as_slice() == currentUser {continue;}
 
-            extQueue.push(format!(
-                "<presence from='{}' to='{}'>\
-                    {}\
-                </presence>",
-                currentUser,
-                sessionJid,
-                ::stanza_parser::get_inside(presence)
-            ));
-        }
+        //    extQueue.push(format!(
+        //        "<presence from='{}' to='{}'>\
+        //            {}\
+        //        </presence>",
+        //        currentUser,
+        //        sessionJid,
+        //        ::stanza_parser::get_inside(presence)
+        //    ));
+        //}
     }
 
 }
