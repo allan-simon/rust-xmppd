@@ -1,0 +1,9 @@
+[package]
+
+name = "rust-xmppd"
+version = "0.0.1"
+authors = [ "allan.simon@supinfo.com" ]
+
+[[bin]]
+
+name = "rust-xmppd"
