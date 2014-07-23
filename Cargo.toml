@@ -7,3 +7,7 @@ authors = [ "allan.simon@supinfo.com" ]
 [[bin]]
 
 name = "rust-xmppd"
+
+[dependencies.rust-xmpp]
+
+git = "https://github.com/allan-simon/rust-xmpp"
